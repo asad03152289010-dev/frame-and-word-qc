@@ -61,6 +61,14 @@
   button.run:disabled{ opacity:.4; cursor:default; }
   button.run:hover:not(:disabled){ background:var(--mark); }
 
+  .progress-wrap{ margin-top:1rem; font-family:var(--mono); font-size:.8rem; }
+  .progress-bar{ height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin-top:.35rem; }
+  .progress-fill{ height:100%; background:var(--mark); width:0%; transition:width .2s; }
+  .error-box{
+    margin-top:1rem; padding:.75rem 1rem; background:#fbdcd3; color:#7a1f0d;
+    font-family:var(--mono); font-size:.8rem; border-radius:2px;
+  }
+
   #results{ margin-top:2.5rem; }
   .video-block{ margin-bottom:2rem; border:1px solid var(--line); background:#fdfdfb; }
   .video-block .vhead{
@@ -121,6 +129,12 @@ Kazim"></textarea>
 
   <button class="run" id="runBtn" disabled>Run QC</button>
 
+  <div class="progress-wrap" id="progressWrap" style="display:none">
+    <span id="progressLabel">Uploading… 0%</span>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
+
+  <div id="errorBox"></div>
   <div id="results"></div>
 </main>
 
@@ -150,31 +164,91 @@ function handleFiles(fileArr){
   runBtn.disabled = selectedFiles.length === 0;
 }
 
-runBtn.addEventListener('click', async () => {
+const progressWrap = document.getElementById('progressWrap');
+const progressLabel = document.getElementById('progressLabel');
+const progressFill = document.getElementById('progressFill');
+const errorBox = document.getElementById('errorBox');
+
+function showError(msg){
+  errorBox.innerHTML = `<div class="error-box">${msg}</div>`;
+}
+function clearError(){ errorBox.innerHTML = ''; }
+
+runBtn.addEventListener('click', () => {
+  clearError();
   runBtn.disabled = true;
-  runBtn.textContent = 'Uploading…';
+  progressWrap.style.display = 'block';
+  progressLabel.textContent = 'Uploading… 0%';
+  progressFill.style.width = '0%';
+
   const fd = new FormData();
   selectedFiles.forEach(f => fd.append('videos', f));
   fd.append('fps', document.getElementById('fps').value);
   fd.append('allowlist', document.getElementById('allowlist').value);
 
-  const res = await fetch('/upload', { method: 'POST', body: fd });
-  const data = await res.json();
-  if (data.error) { alert(data.error); runBtn.disabled = false; runBtn.textContent = 'Run QC'; return; }
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/upload');
 
-  runBtn.textContent = 'Processing…';
-  pollStatus(data.job_id);
+  xhr.upload.addEventListener('progress', (e) => {
+    if (e.lengthComputable) {
+      const pct = Math.round((e.loaded / e.total) * 100);
+      progressLabel.textContent = `Uploading… ${pct}%`;
+      progressFill.style.width = pct + '%';
+    }
+  });
+
+  xhr.onload = () => {
+    let data;
+    try { data = JSON.parse(xhr.responseText); }
+    catch (e) {
+      showError(`Server returned an unexpected response (status ${xhr.status}). Check Railway deploy logs.`);
+      runBtn.disabled = false;
+      progressWrap.style.display = 'none';
+      return;
+    }
+    if (xhr.status >= 400 || data.error) {
+      showError(data.error || `Upload failed (status ${xhr.status})`);
+      runBtn.disabled = false;
+      progressWrap.style.display = 'none';
+      return;
+    }
+    progressLabel.textContent = 'Processing…';
+    progressFill.style.width = '100%';
+    pollStatus(data.job_id);
+  };
+
+  xhr.onerror = () => {
+    showError('Upload failed — network error or server crashed. Check Railway deploy logs.');
+    runBtn.disabled = false;
+    progressWrap.style.display = 'none';
+  };
+
+  xhr.send(fd);
 });
 
 function pollStatus(jobId){
   const interval = setInterval(async () => {
-    const res = await fetch(`/status/${jobId}`);
-    const job = await res.json();
-    renderResults(jobId, job);
-    if (job.status === 'done') {
+    try {
+      const res = await fetch(`/status/${jobId}`);
+      if (!res.ok) {
+        clearInterval(interval);
+        showError(`Status check failed (${res.status}). Check Railway deploy logs.`);
+        runBtn.disabled = false;
+        progressWrap.style.display = 'none';
+        return;
+      }
+      const job = await res.json();
+      renderResults(jobId, job);
+      if (job.status === 'done') {
+        clearInterval(interval);
+        runBtn.disabled = false;
+        progressWrap.style.display = 'none';
+      }
+    } catch (e) {
       clearInterval(interval);
-      runBtn.textContent = 'Run QC';
+      showError('Lost connection while checking status: ' + e.message);
       runBtn.disabled = false;
+      progressWrap.style.display = 'none';
     }
   }, 2000);
 }
