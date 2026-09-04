@@ -7,7 +7,7 @@ report per video, with thumbnails.
 """
 
 import csv
-import hashlib
+import difflib
 import os
 import re
 import subprocess
@@ -65,29 +65,37 @@ def ocr_frame(frame_path: Path) -> str:
     return pytesseract.image_to_string(gray).strip()
 
 
-def dedupe_readings(readings):
+def dedupe_readings(readings, similarity_threshold=0.82):
+    """
+    Collapses consecutive frames with SIMILAR (not just identical) text into
+    one event. OCR output wobbles slightly frame to frame even when the
+    on-screen text hasn't visually changed, so exact-match dedup under-merges.
+    """
     events = []
-    prev_hash = None
     current = None
 
-    def norm_hash(t):
-        return hashlib.md5(re.sub(r"\s+", " ", t.lower()).strip().encode()).hexdigest()
+    def norm(t):
+        return re.sub(r"\s+", " ", t.lower()).strip()
 
     for ts, text, frame in readings:
         if not text.strip():
-            prev_hash = None
             if current:
                 events.append(current)
                 current = None
             continue
-        h = norm_hash(text)
-        if h == prev_hash and current:
-            current["end"] = ts
-        else:
-            if current:
+
+        if current:
+            sim = difflib.SequenceMatcher(None, norm(current["text"]), norm(text)).ratio()
+            if sim >= similarity_threshold:
+                current["end"] = ts
+                if len(text) > len(current["text"]):
+                    current["text"] = text
+                continue
+            else:
                 events.append(current)
-            current = {"start": ts, "end": ts, "text": text, "frame": frame}
-        prev_hash = h
+
+        current = {"start": ts, "end": ts, "text": text, "frame": frame}
+
     if current:
         events.append(current)
     return events
@@ -119,10 +127,15 @@ def process_video(job_id: str, video_path: Path, allowlist: set, fps: float):
         events = dedupe_readings(readings)
 
         flags = []
+        seen_words = set()  # only report each unique misspelling once per video
         for ev in events:
             flagged_words = check_spelling(ev["text"], allowlist)
-            if not flagged_words:
+            new_words = [w for w in flagged_words if w.lower() not in seen_words]
+            if not new_words:
                 continue
+            for w in new_words:
+                seen_words.add(w.lower())
+
             thumb_name = f"{video_path.stem}_{format_ts(ev['start']).replace(':', '')}.jpg"
             thumb_path = thumbs_dir / thumb_name
             try:
@@ -132,7 +145,7 @@ def process_video(job_id: str, video_path: Path, allowlist: set, fps: float):
             flags.append({
                 "start": format_ts(ev["start"]),
                 "end": format_ts(ev["end"]),
-                "words": sorted(set(flagged_words)),
+                "words": sorted(set(new_words)),
                 "text": ev["text"].replace("\n", " ").strip(),
                 "thumb": f"/reports/{job_id}/thumbs/{thumb_name}" if thumb_path.exists() else None,
             })
