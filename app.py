@@ -273,19 +273,17 @@ def process_video_via_transcript(video_path: Path, allowlist: set, srt_entries=N
     entries = srt_entries if srt_entries is not None else transcribe_with_groq(video_path)
 
     flags = []
-    seen_words = set()
     for start, end, text in entries:
         flagged_words = check_spelling(text, allowlist)
-        new_words = [w for w in flagged_words if w.lower() not in seen_words]
-        if not new_words:
-            continue
-        for w in new_words:
-            seen_words.add(w.lower())
+        remark = "Spelling mistake — needs fix" if flagged_words else "Matches — no issue"
         flags.append({
             "start": format_ts(start),
             "end": format_ts(end),
-            "words": sorted(set(new_words)),
-            "text": text.strip(),
+            "words": sorted(set(flagged_words)),
+            "screen_text": text.strip(),
+            "model_text": text.strip(),
+            "remark": remark,
+            "has_issue": bool(flagged_words),
             "thumb": None,
         })
     return flags
@@ -311,14 +309,8 @@ def process_video(job_id: str, video_path: Path, allowlist: set, fps: float,
             events = dedupe_readings(readings)
 
             flags = []
-            seen_words = set()  # only report each unique misspelling once per video
             for ev in events:
                 confirmed_words = find_confirmed_typos(ev["tess_text"], ev["text"], allowlist)
-                new_words = [w for w in confirmed_words if w.lower() not in seen_words]
-                if not new_words:
-                    continue
-                for w in new_words:
-                    seen_words.add(w.lower())
 
                 thumb_name = f"{video_path.stem}_{format_ts(ev['start']).replace(':', '')}.jpg"
                 thumb_path = thumbs_dir / thumb_name
@@ -326,11 +318,20 @@ def process_video(job_id: str, video_path: Path, allowlist: set, fps: float,
                     os.replace(ev["frame"], thumb_path)
                 except OSError:
                     pass
+
+                if confirmed_words:
+                    remark = "Spelling mistake — needs fix"
+                else:
+                    remark = "Matches — no issue"
+
                 flags.append({
                     "start": format_ts(ev["start"]),
                     "end": format_ts(ev["end"]),
-                    "words": sorted(set(new_words)),
-                    "text": ev["text"].replace("\n", " ").strip(),
+                    "words": sorted(set(confirmed_words)),
+                    "screen_text": ev["tess_text"].replace("\n", " ").strip(),
+                    "model_text": ev["text"].replace("\n", " ").strip(),
+                    "remark": remark,
+                    "has_issue": bool(confirmed_words),
                     "thumb": f"/reports/{job_id}/thumbs/{thumb_name}" if thumb_path.exists() else None,
                 })
 
@@ -354,7 +355,7 @@ def process_video(job_id: str, video_path: Path, allowlist: set, fps: float,
             "job_id": job_id,
             "video": key,
             "method": method,
-            "flag_count": len(flags),
+            "flag_count": sum(1 for f in flags if f.get("has_issue")),
             "timestamp": time.strftime("%Y-%m-%d %H:%M"),
             "csv_url": f"/reports/{job_id}/report.csv",
         })
@@ -377,11 +378,15 @@ def write_csv_report(job_id: str):
                     "video": vname,
                     "start_time": flag["start"],
                     "end_time": flag["end"],
-                    "flagged_words": ", ".join(flag["words"]),
-                    "full_ocr_text": flag["text"],
+                    "remark": flag.get("remark", ""),
+                    "flagged_words": ", ".join(flag.get("words", [])),
+                    "on_screen_text": flag.get("screen_text", ""),
+                    "model_text": flag.get("model_text", ""),
                 })
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["video", "start_time", "end_time", "flagged_words", "full_ocr_text"])
+        writer = csv.DictWriter(f, fieldnames=[
+            "video", "start_time", "end_time", "remark", "flagged_words", "on_screen_text", "model_text"
+        ])
         writer.writeheader()
         writer.writerows(rows)
 

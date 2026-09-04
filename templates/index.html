@@ -131,6 +131,15 @@
 
   .no-flags{ padding:1.1rem 1.2rem; font-size:.85rem; color:var(--ok); }
 
+  .flag-issue{ border-left:3px solid var(--warn); }
+  .flag-ok{ border-left:3px solid var(--ok); }
+  .compare-row{ display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin:.5rem 0; }
+  .compare-label{ font-size:.68rem; text-transform:uppercase; letter-spacing:.03em; color:var(--text-dim); display:block; margin-bottom:.2rem; }
+  .compare-text{ font-size:.83rem; color:var(--text); font-family:var(--mono); }
+  .remark{ margin-top:.5rem; font-size:.78rem; font-weight:600; display:inline-block; padding:.2rem .6rem; border-radius:4px; }
+  .remark-bad{ background:#3a2c10; color:var(--warn); }
+  .remark-ok{ background:var(--ok-dim); color:var(--ok); }
+
   .csv-link{ font-size:.8rem; margin-bottom:1rem; }
   .csv-link a{ color:var(--accent); text-decoration:none; }
   .csv-link a:hover{ text-decoration:underline; }
@@ -371,26 +380,43 @@ function renderResults(jobId, job){
         <span class="status-badge status-${vdata.status}">${vdata.status}</span>
       </div>`;
     if (vdata.status === 'done') {
-      if (vdata.flags.length === 0) {
-        html += `<div class="no-flags">no spelling issues flagged ✓</div>`;
+      if (!vdata.flags || vdata.flags.length === 0) {
+        html += `<div class="no-flags">no text segments found</div>`;
       } else {
         vdata.flags.forEach(flag => {
-          html += `<div class="flag">
+          const issue = flag.has_issue;
+          html += `<div class="flag ${issue ? 'flag-issue' : 'flag-ok'}">
             ${flag.thumb ? `<img src="${flag.thumb}">` : ''}
             <div class="flag-meta">
               <div class="flag-time">${flag.start} – ${flag.end}</div>
-              <div class="flag-words">${flag.words.map(w => `<span>${w}</span>`).join('')}</div>
-              <div class="flag-text">${flag.text}</div>
+              <div class="compare-row">
+                <div class="compare-col">
+                  <span class="compare-label">On-screen text</span>
+                  <div class="compare-text">${escapeHtml(flag.screen_text || '')}</div>
+                </div>
+                <div class="compare-col">
+                  <span class="compare-label">Model reading</span>
+                  <div class="compare-text">${escapeHtml(flag.model_text || '')}</div>
+                </div>
+              </div>
+              ${flag.words && flag.words.length ? `<div class="flag-words">${flag.words.map(w => `<span>${w}</span>`).join('')}</div>` : ''}
+              <div class="remark ${issue ? 'remark-bad' : 'remark-ok'}">${flag.remark}</div>
             </div>
           </div>`;
         });
       }
     } else if (vdata.status === 'error') {
-      html += `<div class="no-flags" style="color:#a1341a">error: ${vdata.error || 'unknown'}</div>`;
+      html += `<div class="no-flags" style="color:#f5a3a3">error: ${vdata.error || 'unknown'}</div>`;
     }
     html += `</div>`;
   }
   results.innerHTML = html;
+}
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
 </script>
 </body>
