@@ -58,3 +58,4 @@ Open http://localhost:8080
 - `MAX_CONTENT_LENGTH` is set to 2GB per upload request — adjust in
   `app.py` if your videos are larger, and make sure your host's request
   size limits (e.g. Render/Railway proxy limits) match.
+"# frame-and-word-qc" 
