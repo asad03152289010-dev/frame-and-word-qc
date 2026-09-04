@@ -240,7 +240,10 @@ def status(job_id):
         job = JOBS.get(job_id)
         if not job:
             return jsonify({"error": "Job not found"}), 404
-        return jsonify(job)
+        # allowlist is stored as a Python set internally (fast lookups) but
+        # sets aren't JSON-serializable, so exclude it from the response.
+        safe_job = {"status": job["status"], "videos": job["videos"]}
+        return jsonify(safe_job)
 
 
 @app.route("/reports/<job_id>/thumbs/<filename>")
