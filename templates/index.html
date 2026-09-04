@@ -6,98 +6,129 @@
 <title>Frame &amp; Word — Video Spelling QC</title>
 <style>
   :root{
-    --ink:#1c1f1a;
-    --paper:#f6f5f0;
-    --line:#d8d5c9;
-    --mark:#c65d2e;
-    --mark-dim:#e9c3ac;
-    --ok:#3f6b4a;
+    --bg:#0e0f11;
+    --panel:#17181b;
+    --panel-2:#1e2024;
+    --line:#2a2c30;
+    --accent:#5b8def;
+    --accent-dim:#1c2c45;
+    --text:#e8e8ea;
+    --text-dim:#8b8d94;
+    --ok:#3ecf8e;
+    --ok-dim:#123326;
+    --warn:#f0a942;
+    --sans: -apple-system, "Inter", "Segoe UI", Roboto, sans-serif;
     --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-    --serif: "Source Serif Pro", Georgia, serif;
   }
   *{box-sizing:border-box;}
   body{
-    margin:0; background:var(--paper); color:var(--ink);
-    font-family:var(--serif); line-height:1.5;
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--sans); line-height:1.5;
   }
   header{
-    padding:2.5rem 1.5rem 1.5rem; max-width:880px; margin:0 auto;
+    padding:1.25rem 2rem; max-width:1040px; margin:0 auto;
     border-bottom:1px solid var(--line);
+    display:flex; align-items:baseline; gap:.75rem;
   }
   header h1{
-    font-size:2rem; margin:0 0 .25rem; font-weight:600; letter-spacing:-.01em;
+    font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em;
   }
-  header h1 .mark{ color:var(--mark); }
-  header p{ margin:0; color:#5b5a52; font-family:var(--mono); font-size:.85rem; }
+  header h1 .mark{ color:var(--accent); }
+  header p{ margin:0; color:var(--text-dim); font-size:.82rem; }
 
-  main{ max-width:880px; margin:0 auto; padding:2rem 1.5rem 4rem; }
+  main{ max-width:1040px; margin:0 auto; padding:2rem 2rem 4rem; }
 
   .dropzone{
-    border:2px dashed var(--line); border-radius:2px; padding:2.5rem 1.5rem;
+    border:1px solid var(--line); border-radius:8px; padding:3rem 1.5rem;
     text-align:center; cursor:pointer; transition:border-color .15s, background .15s;
-    background:#fdfdfb;
+    background:var(--panel);
   }
-  .dropzone.drag{ border-color:var(--mark); background:#fbf1ea; }
+  .dropzone.drag{ border-color:var(--accent); background:var(--accent-dim); }
   .dropzone p{ margin:.25rem 0; }
-  .dropzone .big{ font-size:1.05rem; }
-  .dropzone .small{ font-family:var(--mono); font-size:.8rem; color:#8a887c; }
+  .dropzone .big{ font-size:1rem; color:var(--text); }
+  .dropzone .small{ font-size:.78rem; color:var(--text-dim); margin-top:.4rem; }
   input[type=file]{ display:none; }
 
-  #filelist{ margin-top:1rem; font-family:var(--mono); font-size:.85rem; }
-  #filelist .row{ display:flex; justify-content:space-between; padding:.3rem 0; border-bottom:1px solid var(--line); }
+  #filelist{ margin-top:1rem; font-size:.85rem; }
+  #filelist .row{
+    display:flex; justify-content:space-between; padding:.6rem .9rem;
+    background:var(--panel); border:1px solid var(--line); border-radius:6px; margin-bottom:.4rem;
+  }
 
   .options{ margin-top:1.5rem; display:grid; gap:1rem; grid-template-columns:1fr 1fr; }
-  .field label{ display:block; font-family:var(--mono); font-size:.75rem; text-transform:none; color:#5b5a52; margin-bottom:.35rem; }
-  .field input, .field textarea{
-    width:100%; font-family:var(--mono); font-size:.85rem; padding:.5rem .6rem;
-    border:1px solid var(--line); border-radius:2px; background:#fff; color:var(--ink);
+  .field label{ display:block; font-size:.78rem; color:var(--text-dim); margin-bottom:.4rem; }
+  .field input, .field textarea, .field select{
+    width:100%; font-family:var(--sans); font-size:.85rem; padding:.55rem .7rem;
+    border:1px solid var(--line); border-radius:6px; background:var(--panel-2); color:var(--text);
   }
-  .field textarea{ min-height:64px; resize:vertical; }
+  .field select{ cursor:pointer; }
+  .field input:focus, .field textarea:focus, .field select:focus{ outline:none; border-color:var(--accent); }
+  .field textarea{ min-height:64px; resize:vertical; font-family:var(--mono); }
+
+  .section-title{
+    margin:3rem 0 1rem; font-size:.8rem; font-weight:600; color:var(--text-dim);
+    text-transform:uppercase; letter-spacing:.04em; padding-top:1.5rem; border-top:1px solid var(--line);
+  }
+  .history-item{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:.75rem 1rem; background:var(--panel); border:1px solid var(--line);
+    border-radius:6px; margin-bottom:.5rem; font-size:.83rem;
+  }
+  .history-item .h-left{ display:flex; flex-direction:column; gap:.2rem; }
+  .history-item .h-video{ font-weight:600; }
+  .history-item .h-meta{ font-size:.75rem; color:var(--text-dim); }
+  .history-item .h-flags{ font-size:.78rem; color:var(--warn); }
+  .history-item a{ color:var(--accent); text-decoration:none; font-size:.78rem; }
+  .history-item a:hover{ text-decoration:underline; }
+  .history-empty{ font-size:.83rem; color:var(--text-dim); }
 
   button.run{
-    margin-top:1.5rem; font-family:var(--mono); font-size:.9rem; padding:.7rem 1.4rem;
-    background:var(--ink); color:var(--paper); border:none; border-radius:2px; cursor:pointer;
+    margin-top:1.5rem; font-size:.85rem; font-weight:600; padding:.65rem 1.5rem;
+    background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer;
   }
-  button.run:disabled{ opacity:.4; cursor:default; }
-  button.run:hover:not(:disabled){ background:var(--mark); }
+  button.run:disabled{ opacity:.35; cursor:default; }
+  button.run:hover:not(:disabled){ background:#4a7ce0; }
 
-  .progress-wrap{ margin-top:1rem; font-family:var(--mono); font-size:.8rem; }
-  .progress-bar{ height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin-top:.35rem; }
-  .progress-fill{ height:100%; background:var(--mark); width:0%; transition:width .2s; }
+  .progress-wrap{ margin-top:1rem; font-size:.8rem; color:var(--text-dim); }
+  .progress-bar{ height:6px; background:var(--panel-2); border-radius:3px; overflow:hidden; margin-top:.4rem; }
+  .progress-fill{ height:100%; background:var(--accent); width:0%; transition:width .2s; }
   .error-box{
-    margin-top:1rem; padding:.75rem 1rem; background:#fbdcd3; color:#7a1f0d;
-    font-family:var(--mono); font-size:.8rem; border-radius:2px;
+    margin-top:1rem; padding:.75rem 1rem; background:#3a1a1a; color:#f5a3a3;
+    font-size:.82rem; border-radius:6px; border:1px solid #5c2626;
   }
 
   #results{ margin-top:2.5rem; }
-  .video-block{ margin-bottom:2rem; border:1px solid var(--line); background:#fdfdfb; }
+  .video-block{
+    margin-bottom:1.5rem; border:1px solid var(--line); background:var(--panel); border-radius:8px; overflow:hidden;
+  }
   .video-block .vhead{
     display:flex; justify-content:space-between; align-items:center;
-    padding:.75rem 1rem; border-bottom:1px solid var(--line); font-family:var(--mono); font-size:.85rem;
+    padding:.9rem 1.2rem; border-bottom:1px solid var(--line); background:var(--panel-2);
   }
-  .video-block .vname{ font-weight:600; }
-  .status-badge{ font-family:var(--mono); font-size:.7rem; padding:.15rem .5rem; border-radius:10px; }
-  .status-queued{ background:#eee; color:#777; }
-  .status-processing{ background:#fdeacb; color:#8a5a12; }
-  .status-done{ background:#dcebe0; color:var(--ok); }
-  .status-error{ background:#fbdcd3; color:#a1341a; }
+  .video-block .vname{ font-weight:600; font-size:.9rem; }
+  .status-badge{ font-size:.68rem; font-weight:600; padding:.2rem .6rem; border-radius:20px; text-transform:uppercase; letter-spacing:.03em; }
+  .status-queued{ background:var(--panel-2); color:var(--text-dim); }
+  .status-processing{ background:#3a2c10; color:var(--warn); }
+  .status-done{ background:var(--ok-dim); color:var(--ok); }
+  .status-error{ background:#3a1a1a; color:#f5a3a3; }
 
-  .flag{ display:flex; gap:1rem; padding:1rem; border-bottom:1px solid var(--line); }
+  .flag{ display:flex; gap:1.1rem; padding:1.1rem 1.2rem; border-bottom:1px solid var(--line); }
   .flag:last-child{ border-bottom:none; }
-  .flag img{ width:120px; height:auto; border:1px solid var(--line); flex-shrink:0; }
-  .flag-meta{ font-family:var(--mono); font-size:.8rem; color:#5b5a52; }
-  .flag-time{ color:var(--mark); font-weight:600; }
-  .flag-words{ margin:.35rem 0; }
+  .flag img{ width:130px; height:auto; border-radius:6px; border:1px solid var(--line); flex-shrink:0; }
+  .flag-meta{ font-size:.82rem; color:var(--text-dim); }
+  .flag-time{ color:var(--accent); font-weight:600; font-family:var(--mono); font-size:.78rem; }
+  .flag-words{ margin:.5rem 0; }
   .flag-words span{
-    display:inline-block; background:var(--mark-dim); color:#7a3316; padding:.1rem .45rem;
-    margin:0 .3rem .3rem 0; border-radius:2px; font-size:.78rem;
+    display:inline-block; background:#3a2317; color:#f0a97a; padding:.15rem .55rem;
+    margin:0 .3rem .3rem 0; border-radius:4px; font-size:.76rem; font-weight:600;
   }
-  .flag-text{ font-family:var(--serif); font-size:.9rem; color:#333; }
+  .flag-text{ font-size:.85rem; color:var(--text); }
 
-  .no-flags{ padding:1rem; font-family:var(--mono); font-size:.85rem; color:var(--ok); }
+  .no-flags{ padding:1.1rem 1.2rem; font-size:.85rem; color:var(--ok); }
 
-  .csv-link{ font-family:var(--mono); font-size:.8rem; }
-  .csv-link a{ color:var(--mark); }
+  .csv-link{ font-size:.8rem; margin-bottom:1rem; }
+  .csv-link a{ color:var(--accent); text-decoration:none; }
+  .csv-link a:hover{ text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -116,12 +147,34 @@
 
   <div class="options">
     <div class="field">
+      <label>Review method</label>
+      <select id="method">
+        <option value="ocr">On-screen text (OCR)</option>
+        <option value="srt">Subtitles / audio transcript (SRT)</option>
+      </select>
+    </div>
+    <div class="field">
       <label>Sample rate (frames / second)</label>
       <input type="number" id="fps" value="1" min="0.2" max="5" step="0.2">
+    </div>
+  </div>
+
+  <div class="options" id="srtRow" style="display:none">
+    <div class="field">
+      <label>SRT files (optional — filename must match video name; leave empty to auto-transcribe audio)</label>
+      <input type="file" id="srtInput" multiple accept=".srt">
     </div>
     <div class="field">
       <label>Allow-list (one word per line — names, brands, jargon)</label>
       <textarea id="allowlist" placeholder="e.g.
+Anthropic
+Kazim"></textarea>
+    </div>
+  </div>
+  <div class="options" id="allowlistRowOcr">
+    <div class="field" style="grid-column:1 / -1">
+      <label>Allow-list (one word per line — names, brands, jargon)</label>
+      <textarea id="allowlistOcr" placeholder="e.g.
 Anthropic
 Kazim"></textarea>
     </div>
@@ -136,6 +189,9 @@ Kazim"></textarea>
 
   <div id="errorBox"></div>
   <div id="results"></div>
+
+  <div class="section-title">History</div>
+  <div id="historyList"></div>
 </main>
 
 <script>
@@ -144,7 +200,16 @@ const fileInput = document.getElementById('fileInput');
 const filelist = document.getElementById('filelist');
 const runBtn = document.getElementById('runBtn');
 const results = document.getElementById('results');
+const methodSelect = document.getElementById('method');
+const srtRow = document.getElementById('srtRow');
+const allowlistRowOcr = document.getElementById('allowlistRowOcr');
 let selectedFiles = [];
+
+methodSelect.addEventListener('change', () => {
+  const isSrt = methodSelect.value === 'srt';
+  srtRow.style.display = isSrt ? 'grid' : 'none';
+  allowlistRowOcr.style.display = isSrt ? 'none' : 'grid';
+});
 
 dropzone.addEventListener('click', () => fileInput.click());
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
@@ -181,10 +246,19 @@ runBtn.addEventListener('click', () => {
   progressLabel.textContent = 'Uploading… 0%';
   progressFill.style.width = '0%';
 
+  const method = methodSelect.value;
   const fd = new FormData();
   selectedFiles.forEach(f => fd.append('videos', f));
   fd.append('fps', document.getElementById('fps').value);
-  fd.append('allowlist', document.getElementById('allowlist').value);
+  fd.append('method', method);
+
+  if (method === 'srt') {
+    fd.append('allowlist', document.getElementById('allowlist').value);
+    const srtInput = document.getElementById('srtInput');
+    Array.from(srtInput.files).forEach(f => fd.append('srt_files', f));
+  } else {
+    fd.append('allowlist', document.getElementById('allowlistOcr').value);
+  }
 
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '/upload');
@@ -243,6 +317,7 @@ function pollStatus(jobId){
         clearInterval(interval);
         runBtn.disabled = false;
         progressWrap.style.display = 'none';
+        loadHistory();
       }
     } catch (e) {
       clearInterval(interval);
@@ -252,6 +327,35 @@ function pollStatus(jobId){
     }
   }, 2000);
 }
+
+const historyList = document.getElementById('historyList');
+
+async function loadHistory(){
+  try {
+    const res = await fetch('/history');
+    const items = await res.json();
+    if (!items.length) {
+      historyList.innerHTML = '<div class="history-empty">No videos processed yet.</div>';
+      return;
+    }
+    historyList.innerHTML = items.map(item => `
+      <div class="history-item">
+        <div class="h-left">
+          <span class="h-video">${item.video}</span>
+          <span class="h-meta">${item.timestamp} — ${item.method === 'srt' ? 'subtitles/audio' : 'on-screen OCR'}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:1rem">
+          <span class="h-flags">${item.flag_count} flagged</span>
+          <a href="${item.csv_url}" download>CSV</a>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    historyList.innerHTML = '<div class="history-empty">Couldn\'t load history.</div>';
+  }
+}
+
+loadHistory();
 
 function renderResults(jobId, job){
   let html = `<div class="csv-link"><a href="/reports/${jobId}/report.csv" download>↓ download full CSV report</a></div>`;

@@ -9,6 +9,7 @@ report per video, with thumbnails.
 import base64
 import csv
 import difflib
+import json
 import os
 import re
 import subprocess
@@ -26,12 +27,15 @@ from werkzeug.utils import secure_filename
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+GROQ_WHISPER_MODEL = "whisper-large-v3-turbo"
 
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 REPORT_DIR = BASE_DIR / "reports"
+HISTORY_FILE = BASE_DIR / "history.json"
 UPLOAD_DIR.mkdir(exist_ok=True)
 REPORT_DIR.mkdir(exist_ok=True)
+HISTORY_LOCK = threading.Lock()
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 WORD_RE = re.compile(r"[A-Za-z]{3,}")
@@ -147,7 +151,109 @@ def check_spelling(text: str, allowlist: set):
     return flagged
 
 
-def process_video(job_id: str, video_path: Path, allowlist: set, fps: float):
+def load_history():
+    with HISTORY_LOCK:
+        if not HISTORY_FILE.exists():
+            return []
+        try:
+            return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+
+
+def add_history_entry(entry: dict):
+    with HISTORY_LOCK:
+        history = []
+        if HISTORY_FILE.exists():
+            try:
+                history = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                history = []
+        history.insert(0, entry)
+        history = history[:200]
+        HISTORY_FILE.write_text(json.dumps(history, indent=2), encoding="utf-8")
+
+
+def parse_srt(srt_text: str):
+    """Parse SRT content into a list of (start_seconds, end_seconds, text)."""
+    blocks = re.split(r"\n\s*\n", srt_text.strip())
+    entries = []
+
+    def to_seconds(ts):
+        h, m, rest = ts.split(":")
+        s, ms = rest.split(",")
+        return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
+
+    for block in blocks:
+        lines = [l for l in block.splitlines() if l.strip()]
+        if len(lines) < 2:
+            continue
+        time_line_idx = 1 if re.match(r"^\d+$", lines[0].strip()) else 0
+        time_match = re.match(
+            r"(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})",
+            lines[time_line_idx],
+        )
+        if not time_match:
+            continue
+        start, end = to_seconds(time_match.group(1)), to_seconds(time_match.group(2))
+        text = " ".join(lines[time_line_idx + 1:])
+        entries.append((start, end, text))
+    return entries
+
+
+def transcribe_with_groq(video_path: Path) -> list:
+    """Extract audio and get a timestamped transcript back from Groq Whisper."""
+    if groq_client is None:
+        raise RuntimeError("GROQ_API_KEY is not set — add it in Railway's Variables tab.")
+
+    audio_path = video_path.with_suffix(".mp3")
+    cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ar", "16000", "-ac", "1", "-b:a", "64k", str(audio_path)]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+    try:
+        with open(audio_path, "rb") as f:
+            resp = groq_client.audio.transcriptions.create(
+                file=(audio_path.name, f.read()),
+                model=GROQ_WHISPER_MODEL,
+                response_format="verbose_json",
+            )
+        segments = getattr(resp, "segments", None) or []
+        entries = [(seg["start"], seg["end"], seg["text"]) for seg in segments]
+        if not entries:
+            entries = [(0, 0, getattr(resp, "text", ""))]
+        return entries
+    finally:
+        try:
+            audio_path.unlink()
+        except OSError:
+            pass
+
+
+def process_video_via_transcript(video_path: Path, allowlist: set, srt_entries=None):
+    """Spellcheck against subtitles (given SRT) or an auto-generated audio transcript."""
+    entries = srt_entries if srt_entries is not None else transcribe_with_groq(video_path)
+
+    flags = []
+    seen_words = set()
+    for start, end, text in entries:
+        flagged_words = check_spelling(text, allowlist)
+        new_words = [w for w in flagged_words if w.lower() not in seen_words]
+        if not new_words:
+            continue
+        for w in new_words:
+            seen_words.add(w.lower())
+        flags.append({
+            "start": format_ts(start),
+            "end": format_ts(end),
+            "words": sorted(set(new_words)),
+            "text": text.strip(),
+            "thumb": None,
+        })
+    return flags
+
+
+def process_video(job_id: str, video_path: Path, allowlist: set, fps: float,
+                   method: str = "ocr", srt_entries=None):
     key = video_path.name
     with JOBS_LOCK:
         JOBS[job_id]["videos"][key]["status"] = "processing"
@@ -158,50 +264,61 @@ def process_video(job_id: str, video_path: Path, allowlist: set, fps: float):
     frame_dir = job_report_dir / f"_frames_{video_path.stem}"
 
     try:
-        frame_data = extract_frames(video_path, frame_dir, fps)
-        readings = [(ts, ocr_frame(fp), fp) for fp, ts in frame_data]
-        events = dedupe_readings(readings)
+        if method == "srt":
+            flags = process_video_via_transcript(video_path, allowlist, srt_entries=srt_entries)
+        else:
+            frame_data = extract_frames(video_path, frame_dir, fps)
+            readings = [(ts, ocr_frame(fp), fp) for fp, ts in frame_data]
+            events = dedupe_readings(readings)
 
-        flags = []
-        seen_words = set()  # only report each unique misspelling once per video
-        for ev in events:
-            flagged_words = check_spelling(ev["text"], allowlist)
-            new_words = [w for w in flagged_words if w.lower() not in seen_words]
-            if not new_words:
-                continue
-            for w in new_words:
-                seen_words.add(w.lower())
+            flags = []
+            seen_words = set()  # only report each unique misspelling once per video
+            for ev in events:
+                flagged_words = check_spelling(ev["text"], allowlist)
+                new_words = [w for w in flagged_words if w.lower() not in seen_words]
+                if not new_words:
+                    continue
+                for w in new_words:
+                    seen_words.add(w.lower())
 
-            thumb_name = f"{video_path.stem}_{format_ts(ev['start']).replace(':', '')}.jpg"
-            thumb_path = thumbs_dir / thumb_name
+                thumb_name = f"{video_path.stem}_{format_ts(ev['start']).replace(':', '')}.jpg"
+                thumb_path = thumbs_dir / thumb_name
+                try:
+                    os.replace(ev["frame"], thumb_path)
+                except OSError:
+                    pass
+                flags.append({
+                    "start": format_ts(ev["start"]),
+                    "end": format_ts(ev["end"]),
+                    "words": sorted(set(new_words)),
+                    "text": ev["text"].replace("\n", " ").strip(),
+                    "thumb": f"/reports/{job_id}/thumbs/{thumb_name}" if thumb_path.exists() else None,
+                })
+
+            for f in frame_dir.glob("*.jpg"):
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
             try:
-                os.replace(ev["frame"], thumb_path)
+                frame_dir.rmdir()
             except OSError:
                 pass
-            flags.append({
-                "start": format_ts(ev["start"]),
-                "end": format_ts(ev["end"]),
-                "words": sorted(set(new_words)),
-                "text": ev["text"].replace("\n", " ").strip(),
-                "thumb": f"/reports/{job_id}/thumbs/{thumb_name}" if thumb_path.exists() else None,
-            })
-
-        for f in frame_dir.glob("*.jpg"):
-            try:
-                f.unlink()
-            except OSError:
-                pass
-        try:
-            frame_dir.rmdir()
-        except OSError:
-            pass
 
         with JOBS_LOCK:
             JOBS[job_id]["videos"][key]["status"] = "done"
             JOBS[job_id]["videos"][key]["flags"] = flags
 
-        # Update the combined CSV report
         write_csv_report(job_id)
+
+        add_history_entry({
+            "job_id": job_id,
+            "video": key,
+            "method": method,
+            "flag_count": len(flags),
+            "timestamp": time.strftime("%Y-%m-%d %H:%M"),
+            "csv_url": f"/reports/{job_id}/report.csv",
+        })
 
     except Exception as e:
         with JOBS_LOCK:
@@ -230,14 +347,15 @@ def write_csv_report(job_id: str):
         writer.writerows(rows)
 
 
-def run_job(job_id: str, fps: float):
+def run_job(job_id: str, fps: float, method: str, srt_entries_map: dict):
     with JOBS_LOCK:
         video_names = list(JOBS[job_id]["videos"].keys())
         allowlist = JOBS[job_id]["allowlist"]
 
     for name in video_names:
         video_path = UPLOAD_DIR / job_id / name
-        process_video(job_id, video_path, allowlist, fps)
+        process_video(job_id, video_path, allowlist, fps, method=method,
+                       srt_entries=srt_entries_map.get(name))
 
     with JOBS_LOCK:
         JOBS[job_id]["status"] = "done"
@@ -253,6 +371,7 @@ def upload():
     files = request.files.getlist("videos")
     allowlist_raw = request.form.get("allowlist", "")
     fps = float(request.form.get("fps", DEFAULT_FPS))
+    method = request.form.get("method", "ocr")  # "ocr" or "srt"
     allowlist = {w.strip().lower() for w in allowlist_raw.splitlines() if w.strip()}
 
     if not files:
@@ -274,13 +393,29 @@ def upload():
     if not videos:
         return jsonify({"error": "No valid video files found"}), 400
 
+    # Optional SRT files: matched to a video by shared filename stem
+    srt_entries_map = {}
+    if method == "srt":
+        srt_files = request.files.getlist("srt_files")
+        for sf in srt_files:
+            sf_name = secure_filename(sf.filename)
+            stem = Path(sf_name).stem
+            matched_video = next((v for v in videos if Path(v).stem == stem), None)
+            if matched_video:
+                srt_entries_map[matched_video] = parse_srt(sf.read().decode("utf-8", errors="ignore"))
+
     with JOBS_LOCK:
         JOBS[job_id] = {"status": "processing", "videos": videos, "allowlist": allowlist}
 
-    thread = threading.Thread(target=run_job, args=(job_id, fps), daemon=True)
+    thread = threading.Thread(target=run_job, args=(job_id, fps, method, srt_entries_map), daemon=True)
     thread.start()
 
     return jsonify({"job_id": job_id})
+
+
+@app.route("/history")
+def history():
+    return jsonify(load_history())
 
 
 @app.route("/status/<job_id>")
