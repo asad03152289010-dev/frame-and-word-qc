@@ -19,6 +19,7 @@ import uuid
 from pathlib import Path
 
 import cv2
+import pytesseract
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from groq import Groq
 from spellchecker import SpellChecker
@@ -66,8 +67,10 @@ def extract_frames(video_path: Path, out_dir: Path, fps: float):
     return [(f, i / fps) for i, f in enumerate(frames)]
 
 
-def ocr_frame(frame_path: Path, retries: int = 3) -> str:
-    """Send the frame to Groq's vision model and get back any visible text."""
+def ocr_frame_groq(frame_path: Path, retries: int = 3) -> str:
+    """Send the frame to Groq's vision model -- reads text the way a human
+    would, so it tends to silently 'auto-correct' obvious typos. Good for
+    clean context, bad for catching the typos themselves."""
     if groq_client is None:
         raise RuntimeError("GROQ_API_KEY is not set — add it in Railway's Variables tab.")
 
@@ -105,11 +108,25 @@ def ocr_frame(frame_path: Path, retries: int = 3) -> str:
     return ""
 
 
+def ocr_frame_tesseract(frame_path: Path) -> str:
+    """Literal, pixel-level OCR -- doesn't 'understand' the text, so typos
+    pass through untouched. Noisier than Groq but catches what Groq smooths over."""
+    img = cv2.imread(str(frame_path))
+    if img is None:
+        return ""
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+    try:
+        return pytesseract.image_to_string(gray).strip()
+    except Exception:
+        return ""
+
+
 def dedupe_readings(readings, similarity_threshold=0.82):
     """
-    Collapses consecutive frames with SIMILAR (not just identical) text into
-    one event. OCR output wobbles slightly frame to frame even when the
-    on-screen text hasn't visually changed, so exact-match dedup under-merges.
+    Collapses consecutive frames with SIMILAR (not just identical) clean text
+    into one event, carrying along the literal (Tesseract) reading too.
+    readings: list of (ts, groq_text, tess_text, frame_path)
     """
     events = []
     current = None
@@ -117,28 +134,50 @@ def dedupe_readings(readings, similarity_threshold=0.82):
     def norm(t):
         return re.sub(r"\s+", " ", t.lower()).strip()
 
-    for ts, text, frame in readings:
-        if not text.strip():
+    for ts, groq_text, tess_text, frame in readings:
+        if not groq_text.strip():
             if current:
                 events.append(current)
                 current = None
             continue
 
         if current:
-            sim = difflib.SequenceMatcher(None, norm(current["text"]), norm(text)).ratio()
+            sim = difflib.SequenceMatcher(None, norm(current["text"]), norm(groq_text)).ratio()
             if sim >= similarity_threshold:
                 current["end"] = ts
-                if len(text) > len(current["text"]):
-                    current["text"] = text
+                if len(groq_text) > len(current["text"]):
+                    current["text"] = groq_text
+                if len(tess_text) > len(current["tess_text"]):
+                    current["tess_text"] = tess_text
                 continue
             else:
                 events.append(current)
 
-        current = {"start": ts, "end": ts, "text": text, "frame": frame}
+        current = {"start": ts, "end": ts, "text": groq_text, "tess_text": tess_text, "frame": frame}
 
     if current:
         events.append(current)
     return events
+
+
+def find_confirmed_typos(tess_text: str, groq_text: str, allowlist: set):
+    """
+    Cross-check: Tesseract reads text literally (typos survive), Groq reads
+    it like a human (typos get silently auto-corrected). A word is a
+    confirmed real typo when Tesseract's misspelling isn't a dictionary word,
+    AND the dictionary's best-guess correction for it actually shows up in
+    Groq's cleaned reading -- meaning that's genuinely what's on screen.
+    """
+    confirmed = []
+    groq_lower = groq_text.lower()
+    for w in WORD_RE.findall(tess_text):
+        lw = w.lower()
+        if lw in allowlist or lw in spell:
+            continue  # not misspelled, or explicitly allowed
+        correction = spell.correction(w)
+        if correction and correction.lower() != lw and correction.lower() in groq_lower:
+            confirmed.append(w)
+    return confirmed
 
 
 def check_spelling(text: str, allowlist: set):
@@ -268,14 +307,14 @@ def process_video(job_id: str, video_path: Path, allowlist: set, fps: float,
             flags = process_video_via_transcript(video_path, allowlist, srt_entries=srt_entries)
         else:
             frame_data = extract_frames(video_path, frame_dir, fps)
-            readings = [(ts, ocr_frame(fp), fp) for fp, ts in frame_data]
+            readings = [(ts, ocr_frame_groq(fp), ocr_frame_tesseract(fp), fp) for fp, ts in frame_data]
             events = dedupe_readings(readings)
 
             flags = []
             seen_words = set()  # only report each unique misspelling once per video
             for ev in events:
-                flagged_words = check_spelling(ev["text"], allowlist)
-                new_words = [w for w in flagged_words if w.lower() not in seen_words]
+                confirmed_words = find_confirmed_typos(ev["tess_text"], ev["text"], allowlist)
+                new_words = [w for w in confirmed_words if w.lower() not in seen_words]
                 if not new_words:
                     continue
                 for w in new_words:
