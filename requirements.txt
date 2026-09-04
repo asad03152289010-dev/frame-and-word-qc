@@ -1,6 +1,6 @@
 flask
 gunicorn
 opencv-python-headless
-pytesseract
+groq
 pyspellchecker
 werkzeug

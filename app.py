@@ -6,20 +6,26 @@ Upload multiple videos in the browser, they get processed in the background
 report per video, with thumbnails.
 """
 
+import base64
 import csv
 import difflib
 import os
 import re
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 
 import cv2
-import pytesseract
 from flask import Flask, render_template, request, jsonify, send_from_directory
+from groq import Groq
 from spellchecker import SpellChecker
 from werkzeug.utils import secure_filename
+
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -56,13 +62,43 @@ def extract_frames(video_path: Path, out_dir: Path, fps: float):
     return [(f, i / fps) for i, f in enumerate(frames)]
 
 
-def ocr_frame(frame_path: Path) -> str:
-    img = cv2.imread(str(frame_path))
-    if img is None:
-        return ""
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
-    return pytesseract.image_to_string(gray).strip()
+def ocr_frame(frame_path: Path, retries: int = 3) -> str:
+    """Send the frame to Groq's vision model and get back any visible text."""
+    if groq_client is None:
+        raise RuntimeError("GROQ_API_KEY is not set — add it in Railway's Variables tab.")
+
+    with open(frame_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    prompt = (
+        "Transcribe ALL visible text in this image exactly as it appears, "
+        "including any typos or misspellings -- do NOT correct them. "
+        "If there is no readable text, respond with exactly: NONE. "
+        "Return only the transcribed text, nothing else."
+    )
+
+    for attempt in range(retries):
+        try:
+            resp = groq_client.chat.completions.create(
+                model=GROQ_VISION_MODEL,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    ],
+                }],
+                max_completion_tokens=512,
+                temperature=0,
+            )
+            text = resp.choices[0].message.content.strip()
+            return "" if text.upper() == "NONE" else text
+        except Exception as e:
+            if attempt == retries - 1:
+                print(f"Groq OCR failed on {frame_path.name}: {e}")
+                return ""
+            time.sleep(2 ** attempt)  # backoff on rate limits
+    return ""
 
 
 def dedupe_readings(readings, similarity_threshold=0.82):
