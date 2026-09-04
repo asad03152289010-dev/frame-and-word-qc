@@ -47,7 +47,12 @@
   .dropzone p{ margin:.25rem 0; }
   .dropzone .big{ font-size:1rem; color:var(--text); }
   .dropzone .small{ font-size:.78rem; color:var(--text-dim); margin-top:.4rem; }
-  input[type=file]{ display:none; }
+  #fileInput{ display:none; }
+  input[type=file]{ color:var(--text); font-size:.8rem; }
+  input[type=file]::file-selector-button{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--line);
+    border-radius:6px; padding:.4rem .8rem; margin-right:.6rem; cursor:pointer; font-size:.8rem;
+  }
 
   #filelist{ margin-top:1rem; font-size:.85rem; }
   #filelist .row{
